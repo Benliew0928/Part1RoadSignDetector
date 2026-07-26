@@ -60,7 +60,12 @@ export function BatchResults({ items, busy }: BatchResultsProps) {
         </div>
         <span>{busy ? "Processing" : "Complete"}</span>
       </header>
-      <div className="batch-table" role="table" aria-label="Batch inference results">
+      <div
+        className="batch-table"
+        role="table"
+        aria-label="Batch inference results"
+        tabIndex={0}
+      >
         <div className="batch-row batch-heading" role="row">
           <span role="columnheader">Image</span>
           <span role="columnheader">Signs</span>

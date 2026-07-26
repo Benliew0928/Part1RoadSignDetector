@@ -52,6 +52,10 @@ class Candidate:
     circularity: float
     polygon_vertices: int
     shape_label: str
+    shape_confidence: float
+    boundary_edge_ratio: float
+    inner_edge_density: float
+    inner_contrast: float
     score: float
 
     def serializable(self) -> dict[str, Any]:

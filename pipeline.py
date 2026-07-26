@@ -28,7 +28,7 @@ def process_image(
 ) -> BaselineResult:
     started = time.perf_counter()
     masks = segment_colors(image, config)
-    candidates = extract_candidates(masks, image.shape, config)
+    candidates = extract_candidates(masks, image, config)
     elapsed_ms = (time.perf_counter() - started) * 1000
     return BaselineResult(
         image_id=image_id,

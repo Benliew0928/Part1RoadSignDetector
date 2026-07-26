@@ -7,17 +7,17 @@ preprocessing:
 colors:
   red:
     ranges:
-      - lower: [0, 70, 45]
+      - lower: [0, 80, 55]
         upper: [12, 255, 255]
-      - lower: [165, 70, 45]
+      - lower: [165, 80, 55]
         upper: [179, 255, 255]
   blue:
     ranges:
-      - lower: [90, 65, 40]
+      - lower: [90, 80, 50]
         upper: [135, 255, 255]
   yellow:
     ranges:
-      - lower: [15, 70, 70]
+      - lower: [15, 85, 75]
         upper: [40, 255, 255]
 
 morphology:
@@ -30,10 +30,27 @@ morphology:
     saturation_floor: 130
 
 candidates:
-  min_area_ratio: 0.0005
+  # Keep imperfect, distant, and partly occluded signs. Later checks rank
+  # evidence instead of rejecting colour contours too early.
+  min_area_ratio: 0.0003
   max_area_ratio: 0.70
   min_width: 8
   min_height: 8
-  min_extent: 0.20
-  min_solidity: 0.45
-  max_aspect_ratio: 3.5
+  min_extent: 0.12
+  min_solidity: 0.25
+  max_aspect_ratio: 4.5
+  min_candidate_score: 0.38
+  dominant_candidate_min_area_ratio: 0.08
+  dominant_candidate_min_score: 0.75
+  secondary_min_relative_area: 0.15
+
+verification:
+  canny_lower_threshold: 60
+  canny_upper_threshold: 160
+  edge_band_width: 2
+  min_boundary_edge_ratio: 0.010
+  min_inner_edge_density: 0.0005
+  min_inner_contrast: 4.0
+  target_boundary_edge_ratio: 0.12
+  target_inner_edge_density: 0.035
+  target_inner_contrast: 35.0
