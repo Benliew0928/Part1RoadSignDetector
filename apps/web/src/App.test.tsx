@@ -52,8 +52,9 @@ describe("App", () => {
     expect(screen.getByRole("option", { name: "中文" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Choose image" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Batch" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Video" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Phone" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Video" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Camera" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Phone" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Mute warnings" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Presenter mode" })).toBeEnabled();
   });
