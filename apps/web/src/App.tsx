@@ -1,13 +1,10 @@
 import {
-  Activity,
-  Cpu,
   Files,
-  Gauge,
+  History,
   ImagePlus,
   Maximize2,
   Minimize2,
-  Radio,
-  RotateCcw,
+  RefreshCw,
   ShieldCheck,
   Upload,
   Wifi,
@@ -24,6 +21,15 @@ function revokeObjectUrl(url: string | null): void {
   if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
 }
 
+interface AnalysisHistoryItem {
+  id: string;
+  filename: string;
+  previewUrl: string;
+  result: FrameResult;
+  processing: ProcessingTrace;
+  source: "image" | "batch";
+}
+
 export default function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
@@ -32,12 +38,16 @@ export default function App() {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [processing, setProcessing] = useState<ProcessingTrace | null>(null);
   const [batchItems, setBatchItems] = useState<BatchDisplayItem[]>([]);
+  const [historyItems, setHistoryItems] = useState<AnalysisHistoryItem[]>([]);
+  const [openedBatchPreviewUrl, setOpenedBatchPreviewUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [presenterMode, setPresenterMode] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const batchInputRef = useRef<HTMLInputElement>(null);
   const batchItemsRef = useRef<BatchDisplayItem[]>([]);
+  const historyItemsRef = useRef<AnalysisHistoryItem[]>([]);
+  const imageUrlRef = useRef<string | null>(null);
 
   const refreshHealth = useCallback(async () => {
     try {
@@ -49,26 +59,39 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void refreshHealth();
+    const refreshTimer = window.setTimeout(() => {
+      void refreshHealth();
+    }, 0);
+    return () => window.clearTimeout(refreshTimer);
   }, [refreshHealth]);
-
-  useEffect(() => () => revokeObjectUrl(imageUrl), [imageUrl]);
 
   useEffect(() => {
     batchItemsRef.current = batchItems;
   }, [batchItems]);
 
+  useEffect(() => {
+    historyItemsRef.current = historyItems;
+  }, [historyItems]);
+
+  useEffect(() => {
+    imageUrlRef.current = imageUrl;
+  }, [imageUrl]);
+
   useEffect(
     () => () => {
-      batchItemsRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+      const urls = new Set([
+        imageUrlRef.current,
+        ...batchItemsRef.current.map((item) => item.previewUrl),
+        ...historyItemsRef.current.map((item) => item.previewUrl),
+      ]);
+      urls.forEach(revokeObjectUrl);
     },
     [],
   );
 
   const switchMode = useCallback((mode: SourceMode) => {
     setSourceMode(mode);
-    setResult(null);
-    setProcessing(null);
+    setOpenedBatchPreviewUrl(null);
     setOperationError(null);
   }, []);
 
@@ -76,16 +99,26 @@ export default function App() {
     setSourceMode("image");
     setBusy(true);
     setOperationError(null);
+    setResult(null);
     setProcessing(null);
     const nextUrl = URL.createObjectURL(file);
-    setImageUrl((current) => {
-      revokeObjectUrl(current);
-      return nextUrl;
-    });
+    setImageUrl(nextUrl);
+    setOpenedBatchPreviewUrl(null);
     try {
       const response = await inferImage(file);
       setProcessing(response.processing);
       setResult(response.result);
+      setHistoryItems((current) => [
+        {
+          id: `image-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          filename: file.name,
+          previewUrl: nextUrl,
+          result: response.result,
+          processing: response.processing,
+          source: "image",
+        },
+        ...current,
+      ]);
     } catch (cause) {
       setOperationError(cause instanceof Error ? cause.message : "Image analysis failed.");
     } finally {
@@ -96,25 +129,37 @@ export default function App() {
   const handleBatch = useCallback(async (files: File[]) => {
     setSourceMode("batch");
     setBusy(true);
-    setResult(null);
-    setProcessing(null);
+    setOpenedBatchPreviewUrl(null);
     setOperationError(null);
     const pending: BatchDisplayItem[] = files.slice(0, 100).map((file) => ({
       filename: file.name,
       previewUrl: URL.createObjectURL(file),
     }));
-    batchItemsRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl));
     setBatchItems(pending);
     try {
       const response = await inferBatch(files.slice(0, 100));
-      setBatchItems((current) =>
-        current.map((item, index) => ({
-          ...item,
-          result: response.results[index]?.result,
-          error: response.results[index]?.error,
-        })),
+      const completed: BatchDisplayItem[] = pending.map((item, index) => ({
+        ...item,
+        result: response.results[index]?.result,
+        processing: response.results[index]?.processing,
+        error: response.results[index]?.error,
+      }));
+      setBatchItems(completed);
+      const successfulItems = completed.filter(
+        (item): item is BatchDisplayItem & { result: FrameResult; processing: ProcessingTrace } =>
+          Boolean(item.result && item.processing && !item.error),
       );
-      setResult(response.results.find((item) => item.result)?.result ?? null);
+      setHistoryItems((current) => [
+        ...successfulItems.map((item) => ({
+            id: `batch-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            filename: item.filename,
+            previewUrl: item.previewUrl,
+            result: item.result,
+            processing: item.processing,
+            source: "batch" as const,
+          })),
+        ...current,
+      ]);
     } catch (cause) {
       setOperationError(cause instanceof Error ? cause.message : "Batch analysis failed.");
     } finally {
@@ -124,34 +169,49 @@ export default function App() {
 
   const backendOnline = health?.status === "ok" && !healthError;
   const runtimeLabel = health?.models.detector_device ?? "cpu";
+  const chooseImage = () => fileInputRef.current?.click();
+  const chooseBatch = () => batchInputRef.current?.click();
+  const openHistoryItem = (item: AnalysisHistoryItem) => {
+    setSourceMode("image");
+    setImageUrl(item.previewUrl);
+    setResult(item.result);
+    setProcessing(item.processing);
+    setOpenedBatchPreviewUrl(item.source === "batch" ? item.previewUrl : null);
+    setOperationError(null);
+  };
+  const openBatchItem = (item: BatchDisplayItem) => {
+    if (!item.result || !item.processing || item.error) return;
+    setSourceMode("image");
+    setImageUrl(item.previewUrl);
+    setResult(item.result);
+    setProcessing(item.processing);
+    setOpenedBatchPreviewUrl(item.previewUrl);
+    setOperationError(null);
+  };
 
   return (
-    <main className={`app-shell ${presenterMode ? "presenter-mode" : ""}`}>
-      <header className="topbar">
+    <main className={`app-shell detection-app ${presenterMode ? "presenter-mode" : ""}`}>
+      <header className="detection-topbar">
         <div className="brand">
           <div className="brand-mark">
             <ShieldCheck size={23} aria-hidden="true" />
           </div>
           <div>
             <h1>RoadSign Assist</h1>
-            <span>Part 1 colour and shape vision</span>
+            <span>Colour and shape vision</span>
           </div>
         </div>
-        <div className="system-summary">
-          <span className={`status-pill ${backendOnline ? "online" : "offline"}`}>
+        <div className="detection-topbar-actions">
+          <span className={`system-status ${backendOnline ? "online" : "offline"}`}>
             {backendOnline ? <Wifi size={15} /> : <WifiOff size={15} />}
             {backendOnline ? "System ready" : "Backend offline"}
           </span>
-          <span className="status-pill">
-            <Cpu size={15} />
-            OpenCV baseline
-          </span>
-          <button className="icon-button" onClick={() => void refreshHealth()} title="Refresh status">
-            <RotateCcw size={17} />
+          <button className="quiet-icon-button" onClick={() => void refreshHealth()} title="Refresh status">
+            <RefreshCw size={17} />
             <span className="sr-only">Refresh status</span>
           </button>
           <button
-            className="icon-button"
+            className="quiet-icon-button"
             onClick={() => setPresenterMode((current) => !current)}
             title={presenterMode ? "Exit presenter mode" : "Presenter mode"}
             aria-pressed={presenterMode}
@@ -162,69 +222,101 @@ export default function App() {
         </div>
       </header>
 
-      <div className="workspace">
-        <aside className="control-rail">
-          <section>
-            <span className="rail-label">Input source</span>
-            <div className="segmented-control">
-              <button className={sourceMode === "image" ? "active" : ""} onClick={() => switchMode("image")}>
-                <ImagePlus size={17} />
-                Image
-              </button>
-              <button className={sourceMode === "batch" ? "active" : ""} onClick={() => switchMode("batch")}>
-                <Files size={17} />
-                Batch
-              </button>
-            </div>
-          </section>
-
-          <section className="source-actions">
-            <input
-              ref={sourceMode === "image" ? fileInputRef : batchInputRef}
-              className="sr-only"
-              type="file"
-              multiple={sourceMode === "batch"}
-              accept="image/png,image/jpeg,image/webp,image/bmp"
-              onChange={(event) => {
-                const files = Array.from(event.target.files ?? []);
-                if (files.length) {
-                  if (sourceMode === "image") void handleImage(files[0]);
-                  else void handleBatch(files);
-                }
-                event.target.value = "";
-              }}
-            />
+      <div className="detection-layout">
+        <aside className="upload-rail" aria-label="Image selection">
+          <div className="source-mode-switch" aria-label="Analysis mode">
             <button
-              className="primary-command"
-              onClick={() => (sourceMode === "image" ? fileInputRef.current : batchInputRef.current)?.click()}
-              disabled={!backendOnline || busy}
+              aria-pressed={sourceMode === "image"}
+              className={sourceMode === "image" ? "active" : ""}
+              onClick={() => switchMode("image")}
             >
-              <Upload size={18} />
-              {busy ? "Analyzing" : sourceMode === "image" ? "Choose image" : "Choose images"}
+              <ImagePlus size={17} />
+              Image
+            </button>
+            <button
+              aria-pressed={sourceMode === "batch"}
+              className={sourceMode === "batch" ? "active" : ""}
+              onClick={() => switchMode("batch")}
+            >
+              <Files size={17} />
+              Batch
+            </button>
+          </div>
+
+          <input
+            ref={fileInputRef}
+            className="sr-only"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/bmp"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void handleImage(file);
+              event.target.value = "";
+            }}
+          />
+          <input
+            ref={batchInputRef}
+            className="sr-only"
+            type="file"
+            multiple
+            accept="image/png,image/jpeg,image/webp,image/bmp"
+            onChange={(event) => {
+              const files = Array.from(event.target.files ?? []);
+              if (files.length) void handleBatch(files);
+              event.target.value = "";
+            }}
+          />
+
+          <section className="upload-panel">
+            <span className="rail-label">{sourceMode === "image" ? "Upload image" : "Batch analysis"}</span>
+            <button
+              className="upload-dropzone"
+              onClick={sourceMode === "image" ? chooseImage : chooseBatch}
+              disabled={!backendOnline || busy}
+              aria-label={sourceMode === "image" ? "Choose image" : "Choose images"}
+            >
+              <Upload size={34} aria-hidden="true" />
+              <strong>{busy ? "Analysing image…" : sourceMode === "image" ? "Upload image" : "Choose images"}</strong>
+              <span>{sourceMode === "image" ? "PNG, JPG, WEBP or BMP" : "Up to 100 image files"}</span>
             </button>
           </section>
 
-          <section className="metrics-stack">
-            <span className="rail-label">Current metrics</span>
-            <div className="metric-row"><Activity size={16} /><span>Latency</span><strong>{result ? `${Math.round(result.latency_ms)} ms` : "—"}</strong></div>
-            <div className="metric-row"><Gauge size={16} /><span>FPS</span><strong>{result && result.latency_ms > 0 ? (1000 / result.latency_ms).toFixed(1) : "—"}</strong></div>
-            <div className="metric-row"><Radio size={16} /><span>Candidates</span><strong>{result?.events.length ?? 0}</strong></div>
-            <div className="metric-row"><Cpu size={16} /><span>Runtime</span><strong>{runtimeLabel}</strong></div>
+          <section className="recent-section" aria-live="polite">
+            <span className="rail-label">Recent analyses</span>
+            {historyItems.length ? (
+              <div className="recent-analysis-list">
+                {historyItems.map((item) => (
+                  <button className="recent-analysis" key={item.id} onClick={() => openHistoryItem(item)}>
+                    <img src={item.previewUrl} alt="" />
+                    <span>
+                      <strong>{item.result.events[0]?.label ?? "No sign detected"}</strong>
+                      <small>{item.source === "batch" ? "From batch" : "Single image"}</small>
+                    </span>
+                    {item.source === "batch" ? <Files size={16} aria-hidden="true" /> : <History size={16} aria-hidden="true" />}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="recent-empty">Results from this session will appear here.</p>
+            )}
           </section>
         </aside>
 
-        <section className="primary-work">
+        <section className="detection-main">
           {sourceMode === "batch" ? (
-            <BatchResults items={batchItems} busy={busy} />
+            <BatchResults items={batchItems} busy={busy} onOpenItem={openBatchItem} />
           ) : (
-            <PipelineExplorer trace={processing} fallbackImageUrl={imageUrl} result={result} busy={busy} />
+            <PipelineExplorer
+              trace={processing}
+              fallbackImageUrl={imageUrl}
+              result={result}
+              busy={busy}
+              runtimeLabel={runtimeLabel}
+              onChooseImage={chooseImage}
+              onReturnToBatch={openedBatchPreviewUrl ? () => switchMode("batch") : undefined}
+            />
           )}
           {operationError || healthError ? <div className="error-banner" role="alert">{operationError || healthError}</div> : null}
-          <div className="work-footer">
-            <span><span className="status-dot" />{busy ? "processing" : sourceMode}</span>
-            <span>Classical OpenCV pipeline</span>
-            <span>Frame {result?.frame_id ?? "—"}</span>
-          </div>
         </section>
       </div>
     </main>

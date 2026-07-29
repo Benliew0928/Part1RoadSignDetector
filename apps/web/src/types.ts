@@ -48,6 +48,9 @@ export interface ProcessingTrace {
     };
     polygon_epsilon_fractions: number[];
     circle_min_circularity: number;
+    perspective_ellipse_min_axis_ratio: number;
+    minimum_shape_fit_score: number;
+    silhouette_refine_context_padding: number;
     triangle_min_fit: number;
     near_square_aspect_ratio: [number, number];
   };
@@ -62,6 +65,7 @@ export interface ImageInferenceResponse {
 export interface BatchInferenceItem {
   filename: string | null;
   result?: FrameResult | null;
+  processing?: ProcessingTrace | null;
   error?: string | null;
 }
 

@@ -1,18 +1,20 @@
-import { AlertTriangle, Files, ScanLine } from "lucide-react";
+import { AlertTriangle, ChevronRight, Files, ScanLine } from "lucide-react";
 import type { CSSProperties } from "react";
 
-import type { FrameResult } from "../types";
+import type { FrameResult, ProcessingTrace } from "../types";
 
 export interface BatchDisplayItem {
   filename: string;
   previewUrl: string;
   result?: FrameResult | null;
+  processing?: ProcessingTrace | null;
   error?: string | null;
 }
 
 interface BatchResultsProps {
   items: BatchDisplayItem[];
   busy: boolean;
+  onOpenItem: (item: BatchDisplayItem) => void;
 }
 
 const PREVIEW_WIDTH = 76;
@@ -39,7 +41,7 @@ function previewMediaBox(result: FrameResult): CSSProperties {
   };
 }
 
-export function BatchResults({ items, busy }: BatchResultsProps) {
+export function BatchResults({ items, busy, onOpenItem }: BatchResultsProps) {
   if (!items.length) {
     return (
       <section className="batch-empty" aria-label="Batch results">
@@ -59,37 +61,42 @@ export function BatchResults({ items, busy }: BatchResultsProps) {
         </div>
         <span>{busy ? "Processing" : "Complete"}</span>
       </header>
-      <div
-        className="batch-table"
-        role="table"
-        aria-label="Batch inference results"
-        tabIndex={0}
-      >
+      <div className="batch-table" role="table" aria-label="Batch inference results" tabIndex={0}>
         <div className="batch-row batch-heading" role="row">
           <span role="columnheader">Image</span>
           <span role="columnheader">Signs</span>
           <span role="columnheader">Runtime</span>
           <span role="columnheader">Result</span>
+          <span className="sr-only">Open</span>
         </div>
         {items.map((item) => {
           const result = item.result ?? null;
           const primary = result?.events[0];
+          const canOpen = Boolean(result && item.processing && !item.error);
+
           return (
-            <div className="batch-row" role="row" key={`${item.filename}-${item.previewUrl}`}>
-              <div className="batch-file" role="cell">
-                <div className="batch-preview">
-                  <div
+            <button
+              className="batch-row batch-row-button"
+              type="button"
+              key={`${item.filename}-${item.previewUrl}`}
+              disabled={!canOpen}
+              onClick={() => onOpenItem(item)}
+              aria-label={canOpen ? `Open details for ${item.filename}` : `${item.filename} is still processing`}
+            >
+              <span className="batch-file">
+                <span className="batch-preview">
+                  <span
                     className="batch-preview-media"
                     style={result ? previewMediaBox(result) : { inset: 0 }}
                   >
                     <img src={item.previewUrl} alt="" />
                     {result ? (
-                      <div
+                      <span
                         className="batch-preview-overlay"
                         aria-label={`${result.events.length} detected signs in ${item.filename}`}
                       >
                         {result.events.map((event) => (
-                          <div
+                          <span
                             className={`batch-detection-box severity-${event.severity}`}
                             key={`${event.frame_id}-${event.track_id}`}
                             style={{
@@ -100,17 +107,15 @@ export function BatchResults({ items, busy }: BatchResultsProps) {
                             }}
                           />
                         ))}
-                      </div>
+                      </span>
                     ) : null}
-                  </div>
-                </div>
+                  </span>
+                </span>
                 <span title={item.filename}>{item.filename}</span>
-              </div>
-              <strong role="cell">{item.result?.events.length ?? "—"}</strong>
-              <span role="cell">
-                {item.result ? `${Math.round(item.result.latency_ms)} ms` : "—"}
               </span>
-              <div className={item.error ? "batch-outcome error" : "batch-outcome"} role="cell">
+              <strong>{result?.events.length ?? "—"}</strong>
+              <span>{result ? `${Math.round(result.latency_ms)} ms` : "—"}</span>
+              <span className={item.error ? "batch-outcome error" : "batch-outcome"}>
                 {item.error ? (
                   <>
                     <AlertTriangle size={14} />
@@ -122,8 +127,9 @@ export function BatchResults({ items, busy }: BatchResultsProps) {
                     <span>{primary ? primary.label : "No sign detected"}</span>
                   </>
                 )}
-              </div>
-            </div>
+              </span>
+              <ChevronRight className="batch-row-chevron" size={18} aria-hidden="true" />
+            </button>
           );
         })}
       </div>

@@ -46,7 +46,12 @@ shape:
   polygon_epsilon_fractions: [0.012, 0.018, 0.024]
   silhouette_padding: 2
   silhouette_close_kernel: 3
+  silhouette_refine_context_padding: 4
+  silhouette_max_refinement_ratio: 1.35
+  silhouette_min_seed_overlap: 0.55
   circle_min_circularity: 0.75
+  perspective_ellipse_min_axis_ratio: 0.55
+  minimum_shape_fit_score: 0.74
   near_square_aspect_min: 0.75
   near_square_aspect_max: 1.33
   triangle_min_fit: 0.78

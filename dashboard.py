@@ -43,8 +43,8 @@ def _contour_overlay(image: np.ndarray[Any, Any], candidates: tuple[Any, ...]) -
         bbox = candidate.bbox
         label = (
             f"{candidate.color}: v={candidate.polygon_vertices} "
-            f"C={candidate.circularity:.2f} T={candidate.triangle_fit:.2f} "
-            f"M={candidate.color_coverage:.2f}"
+            f"C={candidate.circle_fit:.2f} E={candidate.ellipse_fit:.2f} "
+            f"T={candidate.triangle_fit:.2f} R={candidate.rectangle_fit:.2f}"
         )
         cv2.putText(
             overlay,
@@ -91,6 +91,13 @@ def _processing_trace(
             },
             "polygon_epsilon_fractions": DEFAULT_CONFIG["shape"]["polygon_epsilon_fractions"],
             "circle_min_circularity": DEFAULT_CONFIG["shape"]["circle_min_circularity"],
+            "perspective_ellipse_min_axis_ratio": DEFAULT_CONFIG["shape"][
+                "perspective_ellipse_min_axis_ratio"
+            ],
+            "minimum_shape_fit_score": DEFAULT_CONFIG["shape"]["minimum_shape_fit_score"],
+            "silhouette_refine_context_padding": DEFAULT_CONFIG["shape"][
+                "silhouette_refine_context_padding"
+            ],
             "triangle_min_fit": DEFAULT_CONFIG["shape"]["triangle_min_fit"],
             "near_square_aspect_ratio": [
                 DEFAULT_CONFIG["shape"]["near_square_aspect_min"],
@@ -124,7 +131,14 @@ def _event_from_candidate(candidate: Any, index: int, frame_id: int, latency_ms:
             f"circularity={candidate.circularity:.3f}",
             f"vertices={candidate.polygon_vertices}",
             f"vertex_votes={','.join(str(value) for value in candidate.polygon_vertex_counts)}",
+            f"circle_fit={candidate.circle_fit:.3f}",
+            f"ellipse_fit={candidate.ellipse_fit:.3f}",
+            f"ellipse_axis_ratio={candidate.ellipse_axis_ratio:.3f}",
             f"triangle_fit={candidate.triangle_fit:.3f}",
+            f"rectangle_fit={candidate.rectangle_fit:.3f}",
+            f"octagon_fit={candidate.octagon_fit:.3f}",
+            f"silhouette_refinement_ratio={candidate.silhouette_refinement_ratio:.3f}",
+            f"shape_fit_score={candidate.shape_confidence:.3f}",
             f"color_coverage={candidate.color_coverage:.3f}",
             f"scale_evidence={candidate.scale_evidence:.3f}",
         ],
@@ -189,10 +203,24 @@ async def infer_batch(files: list[UploadFile] = File(...)) -> dict[str, Any]:
     results = []
     for file in files:
         try:
-            frame, _, _ = analyze_bgr(_read_upload_image(await file.read()))
-            results.append({"filename": file.filename, "result": frame, "error": None})
+            frame, _, processing = analyze_bgr(_read_upload_image(await file.read()))
+            results.append(
+                {
+                    "filename": file.filename,
+                    "result": frame,
+                    "processing": processing,
+                    "error": None,
+                }
+            )
         except Exception as exc:
-            results.append({"filename": file.filename, "result": None, "error": str(exc)})
+            results.append(
+                {
+                    "filename": file.filename,
+                    "result": None,
+                    "processing": None,
+                    "error": str(exc),
+                }
+            )
     return {"count": len(results), "results": results}
 
 

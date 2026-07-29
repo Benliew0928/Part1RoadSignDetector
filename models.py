@@ -52,8 +52,14 @@ class Candidate:
     circularity: float
     polygon_vertices: int
     polygon_vertex_counts: tuple[int, ...]
+    circle_fit: float
+    ellipse_fit: float
+    ellipse_axis_ratio: float
     triangle_fit: float
+    rectangle_fit: float
+    octagon_fit: float
     rotated_aspect_ratio: float
+    silhouette_refinement_ratio: float
     color_coverage: float
     scale_evidence: float
     border_touches: int
