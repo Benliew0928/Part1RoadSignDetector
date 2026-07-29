@@ -51,6 +51,12 @@ class Candidate:
     solidity: float
     circularity: float
     polygon_vertices: int
+    polygon_vertex_counts: tuple[int, ...]
+    triangle_fit: float
+    rotated_aspect_ratio: float
+    color_coverage: float
+    scale_evidence: float
+    border_touches: int
     shape_label: str
     shape_confidence: float
     boundary_edge_ratio: float
@@ -73,4 +79,5 @@ class BaselineResult:
     height: int
     runtime_ms: float
     candidates: tuple[Candidate, ...]
+    raw_masks: dict[str, UInt8Image]
     masks: dict[str, UInt8Image]

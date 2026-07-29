@@ -22,69 +22,51 @@ COLOR_SEGMENTERS: tuple[tuple[str, ColorSegmenter], ...] = (
 
 
 def preprocess_bgr(image: UInt8Image, config: dict[str, Any]) -> UInt8Image:
-    settings = config["preprocessing"]
-    result = image.copy()
-    blur_size = int(settings.get("gaussian_blur_size", 0))
-    if blur_size >= 3:
-        if blur_size % 2 == 0:
-            blur_size += 1
-        result = cv2.GaussianBlur(result, (blur_size, blur_size), 0)
-    if bool(settings.get("clahe_enabled", False)):
-        lab = cv2.cvtColor(result, cv2.COLOR_BGR2LAB)
-        luminance, a_channel, b_channel = cv2.split(lab)
-        grid = int(settings.get("clahe_grid_size", 8))
-        clahe = cv2.createCLAHE(
-            clipLimit=float(settings.get("clahe_clip_limit", 2.0)),
-            tileGridSize=(grid, grid),
-        )
-        enhanced = clahe.apply(luminance)
-        result = cv2.cvtColor(cv2.merge((enhanced, a_channel, b_channel)), cv2.COLOR_LAB2BGR)
-    return cast(UInt8Image, result)
+    """Apply only an explicitly enabled small blur before HSV conversion."""
+    blur_size = int(config["preprocessing"].get("gaussian_blur_size", 0))
+    if blur_size < 3:
+        return image.copy()
+    if blur_size % 2 == 0:
+        blur_size += 1
+    return cast(UInt8Image, cv2.GaussianBlur(image, (blur_size, blur_size), 0))
 
 
-def _morphology(mask: UInt8Image, config: dict[str, Any]) -> UInt8Image:
+def _morphology(mask: UInt8Image, *, color: str, config: dict[str, Any]) -> UInt8Image:
     settings = config["morphology"]
-    iterations = int(settings.get("iterations", 1))
-    open_size = max(1, int(settings.get("open_kernel", 3)))
-    close_size = max(1, int(settings.get("close_kernel", 7)))
-    open_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (open_size, open_size))
-    close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_size, close_size))
-    opened = cv2.morphologyEx(mask, cv2.MORPH_OPEN, open_kernel, iterations=iterations)
-    result = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, close_kernel, iterations=iterations)
+    iterations = int(settings["iterations"])
+    open_size = int(settings["open_kernel"])
+    opening_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (open_size, open_size))
+    result = cv2.morphologyEx(mask, cv2.MORPH_OPEN, opening_kernel, iterations=iterations)
+
+    # The supplied guide recommends a closing operation for red only, after
+    # opening, because red sign borders are frequently interrupted by white.
+    if color == "red":
+        close_size = int(settings["red_close_kernel"])
+        closing_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_size, close_size))
+        result = cv2.morphologyEx(result, cv2.MORPH_CLOSE, closing_kernel, iterations=iterations)
     return cast(UInt8Image, result)
 
 
-def _refine_giant_background_mask(
-    mask: UInt8Image,
-    saturation: UInt8Image,
+def segment_color_stages(
+    image: UInt8Image,
     config: dict[str, Any],
-) -> UInt8Image:
-    settings = config["morphology"].get("background_refinement", {})
-    if not bool(settings.get("enabled", True)):
-        return mask
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    image_area = mask.shape[0] * mask.shape[1]
-    largest_ratio = (
-        max((float(cv2.contourArea(contour)) for contour in contours), default=0.0) / image_area
-    )
-    if largest_ratio <= float(settings.get("giant_contour_area_ratio", 0.70)):
-        return mask
-    floor = int(settings.get("saturation_floor", 130))
-    _, saturated = cv2.threshold(saturation, floor - 1, 255, cv2.THRESH_BINARY)
-    refined = cv2.bitwise_and(mask, saturated)
-    return _morphology(cast(UInt8Image, refined), config)
-
-
-def segment_colors(image: UInt8Image, config: dict[str, Any]) -> dict[str, UInt8Image]:
+) -> tuple[dict[str, UInt8Image], dict[str, UInt8Image]]:
+    """Return raw HSV masks and their cleaned equivalents for the dashboard."""
     processed = preprocess_bgr(image, config)
     hsv = cv2.cvtColor(processed, cv2.COLOR_BGR2HSV)
-    saturation = cast(UInt8Image, hsv[:, :, 1])
-    masks: dict[str, UInt8Image] = {}
+    raw_masks: dict[str, UInt8Image] = {}
+    clean_masks: dict[str, UInt8Image] = {}
     color_configs = cast(dict[str, Mapping[str, Any]], config["colors"])
     for color, segmenter in COLOR_SEGMENTERS:
         if color not in color_configs:
             continue
-        combined = segmenter(cast(UInt8Image, hsv), color_configs[color])
-        cleaned = _morphology(cast(UInt8Image, combined), config)
-        masks[color] = _refine_giant_background_mask(cleaned, saturation, config)
-    return masks
+        raw_mask = segmenter(cast(UInt8Image, hsv), color_configs[color])
+        raw_masks[color] = cast(UInt8Image, raw_mask)
+        clean_masks[color] = _morphology(raw_mask, color=color, config=config)
+    return raw_masks, clean_masks
+
+
+def segment_colors(image: UInt8Image, config: dict[str, Any]) -> dict[str, UInt8Image]:
+    """Compatibility helper returning only the cleaned HSV masks."""
+    _, clean_masks = segment_color_stages(image, config)
+    return clean_masks

@@ -1,7 +1,6 @@
 import { AlertTriangle, Files, ScanLine } from "lucide-react";
 import type { CSSProperties } from "react";
 
-import { advisoryHeadline } from "../advisoryDisplay";
 import type { FrameResult } from "../types";
 
 export interface BatchDisplayItem {
@@ -120,7 +119,7 @@ export function BatchResults({ items, busy }: BatchResultsProps) {
                 ) : (
                   <>
                     <ScanLine size={14} />
-                    <span>{primary ? advisoryHeadline(primary, "en") : "No sign detected"}</span>
+                    <span>{primary ? primary.label : "No sign detected"}</span>
                   </>
                 )}
               </div>

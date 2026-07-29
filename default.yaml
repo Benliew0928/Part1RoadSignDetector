@@ -1,56 +1,57 @@
+# Mirrors DEFAULT_CONFIG in run_demo.py. Values are documented in PROJECT_QNA_GUIDE.md.
 preprocessing:
-  clahe_enabled: true
-  clahe_clip_limit: 2.0
-  clahe_grid_size: 8
-  gaussian_blur_size: 3
+  gaussian_blur_size: 0
 
 colors:
   red:
     ranges:
-      - lower: [0, 80, 55]
+      - lower: [0, 70, 45]
         upper: [12, 255, 255]
-      - lower: [165, 80, 55]
+      - lower: [165, 70, 45]
         upper: [179, 255, 255]
   blue:
     ranges:
-      - lower: [90, 80, 50]
+      - lower: [90, 65, 40]
         upper: [135, 255, 255]
   yellow:
     ranges:
-      - lower: [15, 85, 75]
+      - lower: [15, 70, 70]
         upper: [40, 255, 255]
 
 morphology:
   open_kernel: 3
-  close_kernel: 7
+  red_close_kernel: 3
   iterations: 1
-  background_refinement:
-    enabled: true
-    giant_contour_area_ratio: 0.70
-    saturation_floor: 130
 
 candidates:
-  # Keep imperfect, distant, and partly occluded signs. Later checks rank
-  # evidence instead of rejecting colour contours too early.
-  min_area_ratio: 0.0003
-  max_area_ratio: 0.70
+  min_area_ratio: 0.0005
+  max_area_ratio: 0.95
   min_width: 8
   min_height: 8
-  min_extent: 0.12
-  min_solidity: 0.25
-  max_aspect_ratio: 4.5
-  min_candidate_score: 0.38
-  dominant_candidate_min_area_ratio: 0.08
-  dominant_candidate_min_score: 0.75
-  secondary_min_relative_area: 0.15
+  min_extent: 0.20
+  min_solidity: 0.45
+  max_aspect_ratio: 3.5
+  max_border_touches: 2
+  minimum_color_coverage: 0.25
+  preferred_area_ratio: 0.06
+  large_region_area_ratio: 0.55
+  large_region_min_evidence: 0.25
+  geometry_score_weight: 0.70
+  scale_score_weight: 0.25
+  color_support_weight: 0.05
+  nms_iou_threshold: 0.45
 
-verification:
-  canny_lower_threshold: 60
-  canny_upper_threshold: 160
-  edge_band_width: 2
-  min_boundary_edge_ratio: 0.010
-  min_inner_edge_density: 0.0005
-  min_inner_contrast: 4.0
-  target_boundary_edge_ratio: 0.12
-  target_inner_edge_density: 0.035
-  target_inner_contrast: 35.0
+shape:
+  polygon_epsilon_fraction: 0.02
+  polygon_epsilon_fractions: [0.012, 0.018, 0.024]
+  silhouette_padding: 2
+  silhouette_close_kernel: 3
+  circle_min_circularity: 0.75
+  near_square_aspect_min: 0.75
+  near_square_aspect_max: 1.33
+  triangle_min_fit: 0.78
+  triangle_max_circularity: 0.88
+  triangle_min_vertex_votes: 2
+  rectangle_min_vertex_votes: 2
+  rectangle_max_triangle_fit: 0.70
+  octagon_min_vertex_votes: 3

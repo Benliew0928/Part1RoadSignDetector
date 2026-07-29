@@ -1,17 +1,10 @@
 .venv/
 venv/
 env/
-
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
 .pytest_cache/
 .ruff_cache/
-.mypy_cache/
-.pyright/
-.coverage
-htmlcov/
 *.egg-info/
 
 node_modules/
@@ -21,6 +14,7 @@ apps/web/coverage/
 apps/web/test-results/
 apps/web/playwright-report/
 
+results/
 *.log
 .env
 .env.*

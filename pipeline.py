@@ -8,7 +8,7 @@ import cv2
 
 from roadsign_assist.baseline.candidates import extract_candidates
 from roadsign_assist.baseline.models import BaselineResult, UInt8Image
-from roadsign_assist.baseline.segmentation import segment_colors
+from roadsign_assist.baseline.segmentation import segment_color_stages
 
 
 def read_bgr(path: str | Path) -> UInt8Image:
@@ -27,7 +27,7 @@ def process_image(
     config: dict[str, Any],
 ) -> BaselineResult:
     started = time.perf_counter()
-    masks = segment_colors(image, config)
+    raw_masks, masks = segment_color_stages(image, config)
     candidates = extract_candidates(masks, image, config)
     elapsed_ms = (time.perf_counter() - started) * 1000
     return BaselineResult(
@@ -37,5 +37,6 @@ def process_image(
         height=image.shape[0],
         runtime_ms=elapsed_ms,
         candidates=tuple(candidates),
+        raw_masks=raw_masks,
         masks=masks,
     )

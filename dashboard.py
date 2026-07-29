@@ -3,15 +3,14 @@ from __future__ import annotations
 import argparse
 import base64
 import platform
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from run_demo import DEFAULT_CONFIG, annotate, load_part1_modules
@@ -21,105 +20,120 @@ ROOT = Path(__file__).resolve().parent
 WEB_DIST = ROOT / "apps" / "web" / "dist"
 PIPELINE = load_part1_modules()
 
-app = FastAPI(title="Part 1 Color/Shape Dashboard")
+app = FastAPI(title="Part 1 Colour and Shape Dashboard")
 
 if (WEB_DIST / "assets").is_dir():
     app.mount("/assets", StaticFiles(directory=WEB_DIST / "assets"), name="assets")
 
 
-def _jpeg_base64(image: np.ndarray[Any, Any]) -> str:
-    ok, buffer = cv2.imencode(".jpg", image)
+def _base64_image(image: np.ndarray[Any, Any], extension: str = ".jpg") -> str:
+    ok, buffer = cv2.imencode(extension, image)
     if not ok:
-        raise ValueError("Unable to encode annotated image")
+        raise ValueError("Unable to encode dashboard image")
     return base64.b64encode(buffer.tobytes()).decode("ascii")
 
 
+def _contour_overlay(image: np.ndarray[Any, Any], candidates: tuple[Any, ...]) -> np.ndarray[Any, Any]:
+    """Draw the retained contours and their measured classical features."""
+    overlay = image.copy()
+    colours = {"red": (30, 50, 235), "blue": (235, 130, 30), "yellow": (30, 220, 230)}
+    for candidate in candidates:
+        colour = colours.get(candidate.color, (80, 210, 80))
+        cv2.drawContours(overlay, [candidate.contour], -1, colour, 2)
+        bbox = candidate.bbox
+        label = (
+            f"{candidate.color}: v={candidate.polygon_vertices} "
+            f"C={candidate.circularity:.2f} T={candidate.triangle_fit:.2f} "
+            f"M={candidate.color_coverage:.2f}"
+        )
+        cv2.putText(
+            overlay,
+            label,
+            (bbox.x, max(16, bbox.y - 5)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.42,
+            colour,
+            1,
+            cv2.LINE_AA,
+        )
+    return overlay
+
+
+def _processing_trace(
+    image: np.ndarray[Any, Any], result: Any, annotated: np.ndarray[Any, Any]
+) -> dict[str, Any]:
+    """Return the visible evidence for each Part 1 processing stage."""
+    return {
+        "original_jpeg_base64": _base64_image(image),
+        "raw_masks_png_base64": {
+            colour: _base64_image(mask, ".png") for colour, mask in result.raw_masks.items()
+        },
+        "clean_masks_png_base64": {
+            colour: _base64_image(mask, ".png") for colour, mask in result.masks.items()
+        },
+        "contours_jpeg_base64": _base64_image(_contour_overlay(image, result.candidates)),
+        "final_jpeg_base64": _base64_image(annotated),
+        "parameters": {
+            "hsv_ranges": DEFAULT_CONFIG["colors"],
+            "morphology": DEFAULT_CONFIG["morphology"],
+            "minimum_contour_area_percent": DEFAULT_CONFIG["candidates"]["min_area_ratio"]
+            * 100,
+            "minimum_extent": DEFAULT_CONFIG["candidates"]["min_extent"],
+            "minimum_solidity": DEFAULT_CONFIG["candidates"]["min_solidity"],
+            "maximum_aspect_ratio": DEFAULT_CONFIG["candidates"]["max_aspect_ratio"],
+            "minimum_color_coverage": DEFAULT_CONFIG["candidates"]["minimum_color_coverage"],
+            "preferred_area_percent": DEFAULT_CONFIG["candidates"]["preferred_area_ratio"]
+            * 100,
+            "ranking_weights": {
+                "geometry": DEFAULT_CONFIG["candidates"]["geometry_score_weight"],
+                "scale": DEFAULT_CONFIG["candidates"]["scale_score_weight"],
+                "color_support": DEFAULT_CONFIG["candidates"]["color_support_weight"],
+            },
+            "polygon_epsilon_fractions": DEFAULT_CONFIG["shape"]["polygon_epsilon_fractions"],
+            "circle_min_circularity": DEFAULT_CONFIG["shape"]["circle_min_circularity"],
+            "triangle_min_fit": DEFAULT_CONFIG["shape"]["triangle_min_fit"],
+            "near_square_aspect_ratio": [
+                DEFAULT_CONFIG["shape"]["near_square_aspect_min"],
+                DEFAULT_CONFIG["shape"]["near_square_aspect_max"],
+            ],
+        },
+    }
+
+
 def _read_upload_image(data: bytes) -> np.ndarray[Any, Any]:
-    encoded = np.frombuffer(data, dtype=np.uint8)
-    image = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+    image = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
     if image is None:
         raise ValueError("Unable to decode image")
     return image
 
 
 def _event_from_candidate(candidate: Any, index: int, frame_id: int, latency_ms: float) -> dict[str, Any]:
+    """Create a compact colour-and-shape result for the browser dashboard."""
     bbox = candidate.bbox
     label = f"{candidate.color} {candidate.shape_label.replace('_', ' ')}"
-    evidence = [
-        f"color={candidate.color}",
-        f"shape={candidate.shape_label}",
-        f"score={candidate.score:.3f}",
-        f"area_ratio={candidate.area_ratio:.5f}",
-        f"circularity={candidate.circularity:.3f}",
-        f"vertices={candidate.polygon_vertices}",
-    ]
     return {
-        "schema_version": "part1-color-shape-v1",
         "frame_id": frame_id,
         "track_id": index,
-        "coursework_id": None,
-        "semantic_sign_id": f"{candidate.color}_{candidate.shape_label}",
-        "meaning": {
-            "en": label.title(),
-            "ms": label.title(),
-            "zh": label.title(),
-        },
-        "ocr": {
-            "text": "",
-            "confidence": 0.0,
-            "script": "none",
-            "language": "none",
-            "numeric_value": None,
-            "unit": None,
-            "semantic_sign_id": None,
-        },
+        "label": label.title(),
         "confidence": float(candidate.score),
-        "bbox": {
-            "x1": int(bbox.x),
-            "y1": int(bbox.y),
-            "x2": int(bbox.x2),
-            "y2": int(bbox.y2),
-        },
-        "mask": {
-            "encoding": "polygon",
-            "points": [
-                [int(bbox.x), int(bbox.y)],
-                [int(bbox.x2), int(bbox.y)],
-                [int(bbox.x2), int(bbox.y2)],
-                [int(bbox.x), int(bbox.y2)],
-            ],
-        },
-        "action": {
-            "code": "COLOR_SHAPE_SEGMENTATION",
-            "target_speed_kmh": None,
-            "restriction_value": None,
-            "restriction_unit": None,
-            "direction": None,
-            "advisory_only": True,
-        },
-        "advisory": {
-            "headline": {
-                "en": label.title(),
-                "ms": label.title(),
-                "zh": label.title(),
-            },
-            "instruction": {
-                "en": "Detected by Part 1 color and shape segmentation.",
-                "ms": "Detected by Part 1 color and shape segmentation.",
-                "zh": "Detected by Part 1 color and shape segmentation.",
-            },
-            "safe_to_announce": False,
-        },
+        "bbox": {"x1": bbox.x, "y1": bbox.y, "x2": bbox.x2, "y2": bbox.y2},
         "severity": "information",
         "latency_ms": round(latency_ms, 2),
-        "device": "part1-classical-baseline",
-        "stable": True,
-        "should_announce": False,
-        "evidence": evidence,
+        "evidence": [
+            f"area_ratio={candidate.area_ratio:.5f}",
+            f"circularity={candidate.circularity:.3f}",
+            f"vertices={candidate.polygon_vertices}",
+            f"vertex_votes={','.join(str(value) for value in candidate.polygon_vertex_counts)}",
+            f"triangle_fit={candidate.triangle_fit:.3f}",
+            f"color_coverage={candidate.color_coverage:.3f}",
+            f"scale_evidence={candidate.scale_evidence:.3f}",
+        ],
     }
 
 
-def analyze_bgr(image: np.ndarray[Any, Any], frame_id: int = 1) -> tuple[dict[str, Any], str]:
+def analyze_bgr(
+    image: np.ndarray[Any, Any], frame_id: int = 1
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
     started = time.perf_counter()
     result = PIPELINE.process_image(
         image,
@@ -128,68 +142,46 @@ def analyze_bgr(image: np.ndarray[Any, Any], frame_id: int = 1) -> tuple[dict[st
         config=DEFAULT_CONFIG,
     )
     latency_ms = (time.perf_counter() - started) * 1000
-    events = [
-        _event_from_candidate(candidate, index, frame_id, latency_ms)
-        for index, candidate in enumerate(result.candidates, start=1)
-    ]
     frame = {
         "frame_id": frame_id,
         "width": int(result.width),
         "height": int(result.height),
         "mode": "baseline",
         "latency_ms": round(latency_ms, 2),
-        "events": events,
-        "warnings": [
-            "Part 1 mode: output is color and shape only, not traffic-sign meaning recognition."
+        "events": [
+            _event_from_candidate(candidate, index, frame_id, latency_ms)
+            for index, candidate in enumerate(result.candidates, start=1)
         ],
+        "warnings": ["Part 1 output is limited to colour and shape."],
     }
     annotated = annotate(image, result.candidates)
-    return frame, _jpeg_base64(annotated)
+    return frame, _base64_image(annotated), _processing_trace(image, result, annotated)
 
 
 @app.get("/api/v1/health")
 def health() -> dict[str, Any]:
     return {
         "status": "ok",
-        "version": "part1-color-shape-dashboard",
+        "version": "part1-hsv-contour",
         "diagnostics": {
             "python": platform.python_version(),
             "opencv": cv2.__version__,
             "cuda_available": False,
-            "official_image_count": 84,
             "healthy": True,
         },
         "models": {
             "mode": "baseline",
-            "detector": "Part 1 HSV color segmentation + contour shape detection",
-            "detector_available": True,
-            "detector_loaded": True,
+            "detector": "HSV masks, morphology and contour geometry",
             "detector_device": "cpu",
-            "detector_profile": {
-                "output": "color_and_shape",
-                "colors": "red, blue, yellow",
-                "shapes": "circle, triangle, square_or_rectangle, octagon, other",
-            },
-            "classifier": "disabled for Part 1",
-            "classifier_available": False,
-            "classifier_loaded": False,
-            "classifier_providers": [],
-            "classifier_profile": {"reason": "assignment preliminary work only"},
-            "tracker": "single-frame candidate index",
-            "ocr_available": False,
-            "ocr_loaded": False,
-            "ocr_load_error": None,
-            "warnings": [
-                "This dashboard reports traffic sign color and shape only."
-            ],
+            "warnings": ["Part 1 output is colour and shape only."],
         },
     }
 
 
 @app.post("/api/v1/infer/image")
 async def infer_image(file: UploadFile = File(...)) -> dict[str, Any]:
-    frame, annotated = analyze_bgr(_read_upload_image(await file.read()))
-    return {"result": frame, "annotated_jpeg_base64": annotated}
+    frame, annotated, processing = analyze_bgr(_read_upload_image(await file.read()))
+    return {"result": frame, "annotated_jpeg_base64": annotated, "processing": processing}
 
 
 @app.post("/api/v1/infer/batch")
@@ -197,65 +189,11 @@ async def infer_batch(files: list[UploadFile] = File(...)) -> dict[str, Any]:
     results = []
     for file in files:
         try:
-            frame, _ = analyze_bgr(_read_upload_image(await file.read()))
+            frame, _, _ = analyze_bgr(_read_upload_image(await file.read()))
             results.append({"filename": file.filename, "result": frame, "error": None})
         except Exception as exc:
             results.append({"filename": file.filename, "result": None, "error": str(exc)})
     return {"count": len(results), "results": results}
-
-
-@app.post("/api/v1/infer/video")
-async def infer_video(file: UploadFile = File(...)) -> dict[str, Any]:
-    data = await file.read()
-    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename or "video.mp4").suffix) as handle:
-        handle.write(data)
-        temp_path = Path(handle.name)
-    try:
-        capture = cv2.VideoCapture(str(temp_path))
-        frames_read = 0
-        sampled = 0
-        frame_results = []
-        event_samples = []
-        representative = None
-        while sampled < 12:
-            ok, frame = capture.read()
-            if not ok:
-                break
-            frames_read += 1
-            if frames_read == 1 or frames_read % 15 == 0:
-                sampled += 1
-                result, _ = analyze_bgr(frame, sampled)
-                frame_results.append({"source_frame": frames_read, "result": result})
-                event_samples.extend(result["events"][:2])
-                if representative is None and result["events"]:
-                    representative = result
-        fps = capture.get(cv2.CAP_PROP_FPS) or None
-        capture.release()
-        return {
-            "frames_read": frames_read,
-            "sampled_frames": sampled,
-            "events": len(event_samples),
-            "fps": fps,
-            "frame_results": frame_results,
-            "event_samples": event_samples[:10],
-            "representative_result": representative,
-        }
-    finally:
-        temp_path.unlink(missing_ok=True)
-
-
-@app.websocket("/api/v1/ws/camera/{session_id}")
-async def camera_socket(websocket: WebSocket, session_id: str) -> None:
-    await websocket.accept()
-    frame_id = 0
-    try:
-        while True:
-            data = await websocket.receive_bytes()
-            frame_id += 1
-            frame, _ = analyze_bgr(_read_upload_image(data), frame_id)
-            await websocket.send_json(frame)
-    except WebSocketDisconnect:
-        return
 
 
 @app.get("/")
@@ -268,17 +206,15 @@ def serve_dashboard(path: str = "") -> Any:
     if index.is_file():
         return FileResponse(index)
     return PlainTextResponse(
-        "Original React dashboard has not been built yet. Run: cd apps\\web; npm.cmd ci; npm.cmd run build",
-        status_code=503,
+        "Dashboard has not been built. Run: cd apps\\web; npm run build", status_code=503
     )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run the original dashboard with Part 1 color/shape backend.")
+    parser = argparse.ArgumentParser(description="Run the Part 1 colour and shape dashboard.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8010)
     args = parser.parse_args()
-
     import uvicorn
 
     uvicorn.run(app, host=args.host, port=args.port)
